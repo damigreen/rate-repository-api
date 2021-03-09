@@ -1,7 +1,9 @@
 import { gql, ApolloError } from 'apollo-server';
 import * as yup from 'yup';
-import uuid from 'uuid/v4';
+import { v4 as uuid } from 'uuid';
 import bcrypt from 'bcrypt';
+
+import User from '../../models/User';
 
 export const typeDefs = gql`
   input CreateUserInput {
@@ -30,48 +32,40 @@ class UsernameTakenError extends ApolloError {
   }
 }
 
-const createUserInputSchema = yup.object().shape({
-  username: yup
-    .string()
-    .min(1)
-    .max(30)
-    .lowercase()
-    .trim(),
-  password: yup
-    .string()
-    .min(5)
-    .max(50)
-    .trim(),
+const argsSchema = yup.object().shape({
+  user: yup.object().shape({
+    username: yup.string().min(1).max(30).lowercase().trim(),
+    password: yup.string().min(5).max(50).trim(),
+  }),
 });
+
+const createPasswordHash = (password) => bcrypt.hash(password, 10);
 
 export const resolvers = {
   Mutation: {
-    createUser: async (obj, args, { models }) => {
-      const { User } = models;
-
-      const normalizedUser = await createUserInputSchema.validate(args.user, {
+    createUser: async (obj, args) => {
+      const {
+        user: { password, username, ...user },
+      } = await argsSchema.validate(args, {
         stripUnknown: true,
       });
 
-      const passwordHash = await bcrypt.hash(normalizedUser.password, 10);
+      const passwordHash = await createPasswordHash(password);
 
       const existingUser = await User.query().findOne({
-        username: normalizedUser.username,
+        username,
       });
 
       if (existingUser) {
-        throw UsernameTakenError.fromUsername(normalizedUser.username);
+        throw UsernameTakenError.fromUsername(username);
       }
 
-      const id = uuid();
-
-      await User.query().insert({
-        ...normalizedUser,
+      return User.query().insertAndFetch({
+        ...user,
+        username,
         password: passwordHash,
-        id,
+        id: uuid(),
       });
-
-      return User.query().findById(id);
     },
   },
 };

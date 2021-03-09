@@ -2,7 +2,8 @@ import { gql } from 'apollo-server';
 import { get } from 'lodash';
 import * as yup from 'yup';
 
-import createPaginationQuery from '../../utils/createPaginationQuery';
+import githubClient from '../../utils/githubClient';
+import Review from '../../models/Review';
 
 export const typeDefs = gql`
   type Repository {
@@ -27,20 +28,15 @@ export const typeDefs = gql`
   }
 `;
 
-const reviewsArgsSchema = yup.object({
+const argsSchema = yup.object({
   after: yup.string(),
-  first: yup
-    .number()
-    .min(1)
-    .max(30)
-    .default(30),
+  first: yup.number().min(1).max(30).default(30),
 });
 
-const makeGithubRepositoryResolver = getValue => async (
-  { ownerName, name },
-  args,
-  { githubClient },
-) => {
+const makeGithubRepositoryResolver = (getValue) => async ({
+  ownerName,
+  name,
+}) => {
   return getValue(await githubClient.getRepository(ownerName, name));
 };
 
@@ -49,21 +45,18 @@ export const resolvers = {
     user: ({ userId }, args, { dataLoaders: { userLoader } }) => {
       return userLoader.load(userId);
     },
-    reviews: async (obj, args, { models: { Review } }) => {
-      const normalizedArgs = await reviewsArgsSchema.validate(args);
+    reviews: async ({ id }, args) => {
+      const { first, after } = await argsSchema.validate(args);
 
-      return createPaginationQuery(
-        () =>
-          Review.query().where({
-            repositoryId: obj.id,
-          }),
-        {
-          orderColumn: 'createdAt',
-          orderDirection: 'desc',
-          first: normalizedArgs.first,
-          after: normalizedArgs.after,
-        },
-      );
+      return Review.query()
+        .where({
+          repositoryId: id,
+        })
+        .cursorPaginate({
+          orderBy: [{ column: 'createdAt', direction: 'desc' }, 'id'],
+          first,
+          after,
+        });
     },
     ratingAverage: async (
       { id },
@@ -75,40 +68,40 @@ export const resolvers = {
       args,
       { dataLoaders: { repositoryReviewCountLoader } },
     ) => repositoryReviewCountLoader.load(id),
-    authorizedUserHasReviewed: (
+    authorizedUserHasReviewed: async (
       { id },
       args,
       { dataLoaders: { userRepositoryReviewExistsLoader }, authService },
     ) => {
-      const userId = authService.getUserId();
+      const authorizedUser = await authService.getAuthorizedUser();
 
-      return userId
-        ? userRepositoryReviewExistsLoader.load([userId, id])
+      return authorizedUser
+        ? userRepositoryReviewExistsLoader.load([authorizedUser.id, id])
         : null;
     },
     fullName: ({ ownerName, name }) => [ownerName, name].join('/'),
-    ownerAvatarUrl: makeGithubRepositoryResolver(repository =>
+    ownerAvatarUrl: makeGithubRepositoryResolver((repository) =>
       get(repository, 'owner.avatar_url'),
     ),
-    description: makeGithubRepositoryResolver(repository =>
+    description: makeGithubRepositoryResolver((repository) =>
       get(repository, 'description'),
     ),
     stargazersCount: makeGithubRepositoryResolver(
-      repository => get(repository, 'stargazers_count') || 0,
+      (repository) => get(repository, 'stargazers_count') || 0,
     ),
     watchersCount: makeGithubRepositoryResolver(
-      repository => get(repository, 'watchers_count') || 0,
+      (repository) => get(repository, 'watchers_count') || 0,
     ),
     forksCount: makeGithubRepositoryResolver(
-      repository => get(repository, 'forks_count') || 0,
+      (repository) => get(repository, 'forks_count') || 0,
     ),
     openIssuesCount: makeGithubRepositoryResolver(
-      repository => get(repository, 'open_issues_count') || 0,
+      (repository) => get(repository, 'open_issues_count') || 0,
     ),
-    url: makeGithubRepositoryResolver(repository =>
+    url: makeGithubRepositoryResolver((repository) =>
       get(repository, 'html_url'),
     ),
-    language: makeGithubRepositoryResolver(repository =>
+    language: makeGithubRepositoryResolver((repository) =>
       get(repository, 'language'),
     ),
   },

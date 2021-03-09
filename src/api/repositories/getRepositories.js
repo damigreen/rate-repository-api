@@ -1,11 +1,9 @@
-import Router from 'koa-router';
 import { get } from 'lodash';
 
-import createPaginationQuery from '../utils/createPaginationQuery';
+import githubClient from '../../utils/githubClient';
+import Repository from '../../models/Repository';
 
-const router = new Router();
-
-const getNormalizedRepository = (
+const getRepositoryPayload = (
   repository,
   githubRepository,
   reviewCount,
@@ -25,22 +23,20 @@ const getNormalizedRepository = (
   ownerAvatarUrl: get(githubRepository, 'owner.avatar_url') || null,
 });
 
-router.get('/', async ctx => {
+const getRepositories = async (ctx) => {
   const {
-    models: { Repository },
-    githubClient,
     dataLoaders: { repositoryRatingAverageLoader, repositoryReviewCountLoader },
   } = ctx;
 
-  const data = await createPaginationQuery(() => Repository.query(), {
-    orderColumn: 'createdAt',
+  const data = await Repository.query().cursorPaginate({
+    orderBy: ['createdAt', 'id'],
   });
 
-  const repositoryIds = data.edges.map(edge => edge.node.id);
+  const repositoryIds = data.edges.map((edge) => edge.node.id);
 
   const [githubRepositories, reviewCounts, ratingAverages] = await Promise.all([
     Promise.all(
-      data.edges.map(edge =>
+      data.edges.map((edge) =>
         githubClient.getRepository(edge.node.ownerName, edge.node.name),
       ),
     ),
@@ -52,7 +48,7 @@ router.get('/', async ctx => {
     ...data,
     edges: data.edges.map((edge, index) => ({
       ...edge,
-      node: getNormalizedRepository(
+      node: getRepositoryPayload(
         edge.node,
         githubRepositories[index],
         reviewCounts[index],
@@ -60,6 +56,6 @@ router.get('/', async ctx => {
       ),
     })),
   };
-});
+};
 
-export default router;
+export default getRepositories;
